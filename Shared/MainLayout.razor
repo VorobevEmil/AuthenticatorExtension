@@ -1,0 +1,38 @@
+﻿@using Blazored.LocalStorage
+@inherits LayoutComponentBase
+@inject ILocalStorageService LocalStorage
+
+<MudThemeProvider IsDarkMode="_isDarkMode"/>
+<MudDialogProvider/>
+<MudSnackbarProvider/>
+
+<MudLayout>
+    <MudAppBar>
+        Authenticator App
+        <MudSpacer/>
+
+        <MudTooltip Duration="1000" Text="@(_isDarkMode ? "Switch to Light mode" : "Switch to Dark mode")">
+            <MudIconButton Icon="@(_isDarkMode ? @Icons.Material.Rounded.LightMode : @Icons.Material.Outlined.DarkMode)"
+                           Color="Color.Inherit" OnClick="ChangeTheme"/>
+        </MudTooltip>
+
+    </MudAppBar>
+    <MudMainContent>
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _isDarkMode;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isDarkMode = await LocalStorage.GetItemAsync<bool>("IsDarkMode");
+    }
+    
+    private async Task ChangeTheme()
+    {
+        _isDarkMode = !_isDarkMode;
+        await LocalStorage.SetItemAsync("IsDarkMode", _isDarkMode);
+    }
+}

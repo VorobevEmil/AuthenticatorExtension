@@ -1,0 +1,176 @@
+﻿@page "/popup.html"
+@using System.Timers
+@using System.Web
+@using Blazored.LocalStorage
+@using OtpNet
+@inject IJSRuntime JSRuntime
+@inject ILocalStorageService LocalStorage
+
+
+<MudPaper Height="400px" Width="300px" Class="pa-2 ma-2">
+    <MudPaper Class="@(_otp is null ? _dragClass : "pa-2")" Outlined="true">
+        @if (_otp is null)
+        {
+            <MudFileUpload T="IBrowserFile"
+                           FilesChanged="DecodeQrCodeAsync"
+                           Hidden="@false"
+                           InputClass="absolute mud-width-full mud-height-full overflow-hidden z-20"
+                           InputStyle="opacity:0"
+                           @ondragenter="@SetDragClass"
+                           @ondragleave="@ClearDragClass"
+                           @ondragend="@ClearDragClass">
+                <ButtonTemplate>
+                    <MudText Typo="Typo.h6">
+                        Drag and drop qr code here or click
+                    </MudText>
+                    <MudToolBar DisableGutters="true"
+                                Class="relative d-flex justify-end gap-4 z-30">
+                        <MudButton HtmlTag="label"
+                                   Color="Color.Default"
+                                   for="@context.Id"
+                                   Variant="Variant.Filled">
+                            Open QR code
+                        </MudButton>
+                    </MudToolBar>
+                </ButtonTemplate>
+            </MudFileUpload>
+        }
+        else
+        {
+            <MudText>
+                <MudText Style="display: flex; align-items: center;">
+                    <span>Copy OTP:</span>
+                    <MudChip
+                        Style="height: 26px"
+                        OnClick="CopyToClipboard"
+                        Color="Color.Default">
+                        @((_isShow ? Password : new string('*', Password.Length)) + _otp)
+                    </MudChip>
+                </MudText>
+                <MudText>
+                    Expires in: @_seconds seconds
+                </MudText>
+            </MudText>
+        }
+    </MudPaper>
+    @if (_otp is not null)
+    {
+        <MudTextField
+            T="string"
+            Value="Password"
+            ValueChanged="SetPasswordAsync"
+            Label="Password"
+            Class="my-2"
+            Variant="Variant.Outlined"
+            InputType="@_passwordInput"
+            Adornment="Adornment.End"
+            AdornmentIcon="@_passwordInputIcon"
+            OnAdornmentClick="ShowOrHidePassword"
+            AdornmentAriaLabel="Show Password"/>
+    }
+</MudPaper>
+
+@code
+{
+    private const string DefaultDragClass = "relative rounded-lg border-2 border-dashed mud-width-full mud-height-full z-10 px-2";
+    private string _dragClass = DefaultDragClass;
+
+    private byte[] SecretKey { get; set; } = default!;
+    private string _otp = default!;
+    private int _seconds;
+    private Timer _timer;
+
+    public string Password { get; set; } = default!;
+    private bool _isShow;
+    private InputType _passwordInput = InputType.Password;
+    private string _passwordInputIcon = Icons.Material.Filled.VisibilityOff;
+
+    private void ShowOrHidePassword()
+    {
+        @if (_isShow)
+        {
+            _isShow = false;
+            _passwordInputIcon = Icons.Material.Filled.VisibilityOff;
+            _passwordInput = InputType.Password;
+        }
+        else
+        {
+            _isShow = true;
+            _passwordInputIcon = Icons.Material.Filled.Visibility;
+            _passwordInput = InputType.Text;
+        }
+    }
+
+    private async Task SetPasswordAsync(string password)
+    {
+        Password = password;
+        await LocalStorage.SetItemAsync("password", password);
+    }
+
+    private void SetDragClass()
+        => _dragClass = $"{DefaultDragClass} mud-border-primary";
+
+    private void ClearDragClass()
+        => _dragClass = DefaultDragClass;
+
+
+    private async Task DecodeQrCodeAsync(IBrowserFile file)
+    {
+        var buffer = new byte[file.Size];
+        _ = await file.OpenReadStream().ReadAsync(buffer);
+
+        var base64Image = Convert.ToBase64String(buffer);
+
+        var totpUri = await JSRuntime.InvokeAsync<string>("readQRCode", base64Image);
+
+        var uri = new Uri(totpUri);
+        var secretParam = HttpUtility.ParseQueryString(uri.Query).Get("secret");
+        SecretKey = Base32Encoding.ToBytes(secretParam);
+
+        await LocalStorage.SetItemAsync("secretKey", SecretKey);
+
+        ComputeOtp();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var secretKey = await LocalStorage.GetItemAsync<byte[]>("secretKey");
+        if (secretKey is not null)
+        {
+            SecretKey = secretKey;
+            ComputeOtp();
+            _timer = new Timer(1000);
+            _timer.Elapsed += OnTimerElapsed;
+            _timer.Start();
+        }
+
+        Password = await LocalStorage.GetItemAsync<string>("password");
+    }
+
+    private void ComputeOtp()
+    {
+        var totp = new Totp(SecretKey);
+        _otp = totp.ComputeTotp();
+        _seconds = totp.RemainingSeconds();
+    }
+
+    private void OnTimerElapsed(object sender, ElapsedEventArgs e)
+    {
+        if (_seconds == 0)
+        {
+            ComputeOtp();
+            InvokeAsync(StateHasChanged);
+        }
+        else
+        {
+            _seconds--;
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CopyToClipboard()
+    {
+        var textToCopy = Password + _otp;
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", textToCopy);
+    }
+}
